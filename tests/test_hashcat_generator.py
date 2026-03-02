@@ -141,6 +141,23 @@ class TestBuildCommandCombination:
         pos2 = cmd.index("dates.txt")
         assert pos1 < pos2
 
+    def test_combination_with_single_rule(self):
+        opts = {**self.BASE, "rules": ["/usr/share/hashcat/rules/best64.rule"]}
+        cmd = build_command(opts)
+        assert "-r /usr/share/hashcat/rules/best64.rule" in cmd
+
+    def test_combination_with_multiple_rules(self):
+        opts = {**self.BASE, "rules": ["/usr/share/hashcat/rules/best64.rule", "/usr/share/hashcat/rules/dive.rule"]}
+        cmd = build_command(opts)
+        assert cmd.count("-r") == 2
+        assert "/usr/share/hashcat/rules/best64.rule" in cmd
+        assert "/usr/share/hashcat/rules/dive.rule" in cmd
+
+    def test_combination_with_custom_rule(self):
+        opts = {**self.BASE, "rules": ["/home/user/my_custom.rule"]}
+        cmd = build_command(opts)
+        assert "-r /home/user/my_custom.rule" in cmd
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # build_command – mode 3: brute-force / mask
@@ -192,6 +209,23 @@ class TestBuildCommandHybridWL:
         pos_mask = cmd.index("?d?d?d")
         assert pos_wl < pos_mask
 
+    def test_hybrid_wl_with_single_rule(self):
+        opts = {**self.BASE, "rules": ["/usr/share/hashcat/rules/best64.rule"]}
+        cmd = build_command(opts)
+        assert "-r /usr/share/hashcat/rules/best64.rule" in cmd
+
+    def test_hybrid_wl_with_custom_rule(self):
+        opts = {**self.BASE, "rules": ["/home/user/ctf.rule"]}
+        cmd = build_command(opts)
+        assert "-r /home/user/ctf.rule" in cmd
+
+    def test_hybrid_wl_rule_after_mask(self):
+        opts = {**self.BASE, "rules": ["/usr/share/hashcat/rules/best64.rule"]}
+        cmd = build_command(opts)
+        pos_mask = cmd.index("?d?d?d")
+        pos_rule = cmd.index("-r")
+        assert pos_mask < pos_rule
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # build_command – mode 7: hybrid mask + wordlist
@@ -212,6 +246,23 @@ class TestBuildCommandHybridMask:
         pos_mask = cmd.index("?d?d")
         pos_wl = cmd.index("rockyou.txt")
         assert pos_mask < pos_wl
+
+    def test_hybrid_mask_with_single_rule(self):
+        opts = {**self.BASE, "rules": ["/usr/share/hashcat/rules/best64.rule"]}
+        cmd = build_command(opts)
+        assert "-r /usr/share/hashcat/rules/best64.rule" in cmd
+
+    def test_hybrid_mask_with_custom_rule(self):
+        opts = {**self.BASE, "rules": ["/home/user/ctf.rule"]}
+        cmd = build_command(opts)
+        assert "-r /home/user/ctf.rule" in cmd
+
+    def test_hybrid_mask_rule_after_wordlist(self):
+        opts = {**self.BASE, "rules": ["/usr/share/hashcat/rules/best64.rule"]}
+        cmd = build_command(opts)
+        pos_wl = cmd.index("rockyou.txt")
+        pos_rule = cmd.index("-r")
+        assert pos_wl < pos_rule
 
 
 # ──────────────────────────────────────────────────────────────────────────────

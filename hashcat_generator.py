@@ -233,6 +233,8 @@ def build_command(options: dict) -> str:
             parts.append(shlex.quote(wordlist))
         if wordlist2:
             parts.append(shlex.quote(wordlist2))
+        for rule in options.get("rules") or []:
+            parts += ["-r", shlex.quote(rule)]
 
     elif attack_mode == 3:
         mask = options.get("mask", "")
@@ -246,6 +248,8 @@ def build_command(options: dict) -> str:
             parts.append(shlex.quote(wordlist))
         if mask:
             parts.append(mask)
+        for rule in options.get("rules") or []:
+            parts += ["-r", shlex.quote(rule)]
 
     elif attack_mode == 7:
         mask = options.get("mask", "")
@@ -254,6 +258,8 @@ def build_command(options: dict) -> str:
             parts.append(mask)
         if wordlist:
             parts.append(shlex.quote(wordlist))
+        for rule in options.get("rules") or []:
+            parts += ["-r", shlex.quote(rule)]
 
     for flag in options.get("extra_flags") or []:
         parts.append(flag)
@@ -466,6 +472,8 @@ def prompt_attack_options(attack_mode: int) -> dict:
         print("\n  Combination attack: two wordlists are combined.")
         options["wordlist"] = _pick_wordlist("first wordlist")
         options["wordlist2"] = _pick_wordlist("second wordlist")
+        if _yes("Add rule file(s)?", default=False):
+            options["rules"] = _pick_rules()
 
     elif attack_mode == 3:
         print("\n  Brute-force / mask attack.")
@@ -475,11 +483,15 @@ def prompt_attack_options(attack_mode: int) -> dict:
         print("\n  Hybrid attack: mask is appended to each wordlist entry.")
         options["wordlist"] = _pick_wordlist("wordlist")
         options["mask"] = _pick_mask()
+        if _yes("Add rule file(s)?", default=False):
+            options["rules"] = _pick_rules()
 
     elif attack_mode == 7:
         print("\n  Hybrid attack: mask is prefixed to each wordlist entry.")
         options["mask"] = _pick_mask()
         options["wordlist"] = _pick_wordlist("wordlist")
+        if _yes("Add rule file(s)?", default=False):
+            options["rules"] = _pick_rules()
 
     return options
 
