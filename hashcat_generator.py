@@ -8,8 +8,10 @@ Usage:
     python3 hashcat_generator.py
 """
 
+import os
 import shlex
 import sys
+import tempfile
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Constants
@@ -147,6 +149,26 @@ COMMON_RULES: list[str] = [
     "/usr/share/hashcat/rules/toggles5.rule",
 ]
 
+# Human-readable recipe names and descriptions for the custom rule builder.
+# Each entry is (recipe_key, display_description).
+RULE_RECIPES: list[tuple[str, str]] = [
+    ("leet",              "Leet-speak substitutions  (a→@  e→3  i→1  o→0  s→$  t→7)"),
+    ("capitalize",        "Capitalize first letter                          (Password)"),
+    ("uppercase",         "All uppercase                                    (PASSWORD)"),
+    ("lowercase",         "All lowercase                                    (password)"),
+    ("reverse",           "Reverse word                                   (drowssap)"),
+    ("duplicate",         "Duplicate word                        (passwordpassword)"),
+    ("toggle-case",       "Toggle case of every character                  (pAsSwOrD)"),
+    ("append-digit",      "Append one digit 0-9                      (10 rule lines)"),
+    ("append-two-digits", "Append two digits 00-99                   (100 rule lines)"),
+    ("append-special",    "Append special char  (!, @, #, $, .)       (5 rule lines)"),
+    ("append-year",       "Append year 2020-2025                       (6 rule lines)"),
+    ("append-digit-bang", "Append digit then !  (0!…9!)               (10 rule lines)"),
+    ("prepend-digit",     "Prepend one digit 0-9                      (10 rule lines)"),
+    ("cap-append-digit",  "Capitalize + append digit  (Password0…9)   (10 rule lines)"),
+    ("leet-cap",          "Capitalize + leet-speak                     (1 rule line)"),
+]
+
 MASK_CHARSETS: dict[str, str] = {
     "?l": "lowercase letters   (a-z)",
     "?u": "uppercase letters   (A-Z)",
@@ -191,6 +213,64 @@ def search_hash_modes(query: str) -> list[tuple[int, str]]:
     )
 
 
+# Maps each recipe key to the hashcat rule lines it produces.
+_RULE_RECIPE_MAP: dict[str, list[str]] = {
+    "leet":              ["sa@ se3 si1 so0 ss$ st7"],
+    "capitalize":        ["c"],
+    "uppercase":         ["u"],
+    "lowercase":         ["l"],
+    "reverse":           ["r"],
+    "duplicate":         ["d"],
+    "toggle-case":       ["t"],
+    "append-digit":      [f"${d}" for d in range(10)],
+    "append-two-digits": [f"${a}${b}" for a in range(10) for b in range(10)],
+    "append-special":    ["$!", "$@", "$#", "$$", "$."],
+    "append-year":       ["$2$0$2$0", "$2$0$2$1", "$2$0$2$2",
+                          "$2$0$2$3", "$2$0$2$4", "$2$0$2$5"],
+    "append-digit-bang": [f"${d}$!" for d in range(10)],
+    "prepend-digit":     [f"^{d}" for d in range(10)],
+    "cap-append-digit":  [f"c ${d}" for d in range(10)],
+    "leet-cap":          ["c sa@ se3 si1 so0 ss$ st7"],
+}
+
+
+def build_rule_lines(recipe_keys: list[str]) -> list[str]:
+    """Return deduplicated hashcat rule lines for the given recipe keys.
+
+    Each key must be one of the keys in *RULE_RECIPES*.  Unknown keys are
+    silently skipped.  Duplicate lines are removed while preserving order.
+    """
+    lines: list[str] = []
+    seen: set[str] = set()
+    for key in recipe_keys:
+        for line in _RULE_RECIPE_MAP.get(key, []):
+            if line not in seen:
+                seen.add(line)
+                lines.append(line)
+    return lines
+
+
+def generate_rule_file(recipe_keys: list[str], path: str | None = None) -> str:
+    """Write hashcat rule lines to a file and return its path.
+
+    If *path* is ``None`` a temporary file is created under ``/tmp``.
+    Raises ``ValueError`` if *recipe_keys* produces no rule lines.
+    """
+    lines = build_rule_lines(recipe_keys)
+    if not lines:
+        raise ValueError("No rule lines generated – no valid recipes selected.")
+    if path is None:
+        fd, path = tempfile.mkstemp(
+            prefix="hashcat_custom_", suffix=".rule", dir=tempfile.gettempdir()
+        )
+        with os.fdopen(fd, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+    else:
+        with open(path, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+    return path
+
+
 def build_command(options: dict) -> str:
     """Build and return a hashcat command string from *options*.
 
@@ -233,6 +313,8 @@ def build_command(options: dict) -> str:
             parts.append(shlex.quote(wordlist))
         if wordlist2:
             parts.append(shlex.quote(wordlist2))
+        for rule in options.get("rules") or []:
+            parts += ["-r", shlex.quote(rule)]
 
     elif attack_mode == 3:
         mask = options.get("mask", "")
@@ -246,6 +328,8 @@ def build_command(options: dict) -> str:
             parts.append(shlex.quote(wordlist))
         if mask:
             parts.append(mask)
+        for rule in options.get("rules") or []:
+            parts += ["-r", shlex.quote(rule)]
 
     elif attack_mode == 7:
         mask = options.get("mask", "")
@@ -254,6 +338,8 @@ def build_command(options: dict) -> str:
             parts.append(mask)
         if wordlist:
             parts.append(shlex.quote(wordlist))
+        for rule in options.get("rules") or []:
+            parts += ["-r", shlex.quote(rule)]
 
     for flag in options.get("extra_flags") or []:
         parts.append(flag)
@@ -303,6 +389,50 @@ def _yes(label: str, default: bool = False) -> bool:
     if not answer:
         return default
     return answer.lower().startswith("y")
+
+
+def _build_custom_rule_interactive() -> str:
+    """Interactively build a custom rule file from predefined recipes.
+
+    Presents a numbered menu, collects the user's recipe selections, generates
+    the hashcat rule lines, writes them to a temp file, and returns the path.
+    Returns an empty string if the user cancels or no valid recipes are chosen.
+    """
+    print("\n  ── Custom Rule Builder ──────────────────────────────────────────")
+    print("  Pick transformations to include.  Each recipe adds rule lines –")
+    print("  hashcat tries every rule against every candidate word.\n")
+    for i, (_, desc) in enumerate(RULE_RECIPES, 1):
+        print(f"  {i:2d}. {desc}")
+    print("\n  Enter recipe numbers separated by commas, e.g.  1,8,11")
+    print("  or press Enter to cancel.\n")
+    raw = _prompt("  Recipes")
+    if not raw:
+        return ""
+    selected_keys: list[str] = []
+    for token in raw.replace(" ", "").split(","):
+        if token.isdigit():
+            idx = int(token) - 1
+            if 0 <= idx < len(RULE_RECIPES):
+                key = RULE_RECIPES[idx][0]
+                if key not in selected_keys:
+                    selected_keys.append(key)
+    if not selected_keys:
+        print("  ✗  No valid recipes selected.")
+        return ""
+    try:
+        rule_path = generate_rule_file(selected_keys)
+        lines = build_rule_lines(selected_keys)
+        print(f"\n  ✓  Generated {len(lines)} rule line(s)  →  {rule_path}")
+        preview = lines[:5]
+        print("  Preview:")
+        for line in preview:
+            print(f"    {line}")
+        if len(lines) > 5:
+            print(f"    … and {len(lines) - 5} more")
+        return rule_path
+    except ValueError as exc:
+        print(f"  ✗  {exc}")
+        return ""
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -404,7 +534,10 @@ def _pick_rules() -> list[str]:
     chosen: list[str] = []
     print("\n  Common rule files:")
     _numbered_list(COMMON_RULES)
-    print(f"  {len(COMMON_RULES) + 1:2d}. Enter custom rule path")
+    build_opt = len(COMMON_RULES) + 1
+    custom_opt = len(COMMON_RULES) + 2
+    print(f"  {build_opt:2d}. Build a custom rule from recipes (interactive)")
+    print(f"  {custom_opt:2d}. Enter custom rule file path")
     print("  (Press Enter with no input when done.)\n")
     while True:
         raw = _prompt("  Add rule file (Enter to skip/finish)")
@@ -416,7 +549,13 @@ def _pick_rules() -> list[str]:
                 chosen.append(COMMON_RULES[idx])
                 print(f"  ✓  Added: {COMMON_RULES[idx]}")
                 continue
-            if idx == len(COMMON_RULES):
+            if idx == len(COMMON_RULES):          # build_opt
+                path = _build_custom_rule_interactive()
+                if path:
+                    chosen.append(path)
+                    print(f"  ✓  Custom rule added: {path}")
+                continue
+            if idx == len(COMMON_RULES) + 1:      # custom_opt
                 path = _prompt("  Custom rule path")
                 if path:
                     chosen.append(path)
@@ -466,6 +605,8 @@ def prompt_attack_options(attack_mode: int) -> dict:
         print("\n  Combination attack: two wordlists are combined.")
         options["wordlist"] = _pick_wordlist("first wordlist")
         options["wordlist2"] = _pick_wordlist("second wordlist")
+        if _yes("Add rule file(s)?", default=False):
+            options["rules"] = _pick_rules()
 
     elif attack_mode == 3:
         print("\n  Brute-force / mask attack.")
@@ -475,11 +616,15 @@ def prompt_attack_options(attack_mode: int) -> dict:
         print("\n  Hybrid attack: mask is appended to each wordlist entry.")
         options["wordlist"] = _pick_wordlist("wordlist")
         options["mask"] = _pick_mask()
+        if _yes("Add rule file(s)?", default=False):
+            options["rules"] = _pick_rules()
 
     elif attack_mode == 7:
         print("\n  Hybrid attack: mask is prefixed to each wordlist entry.")
         options["mask"] = _pick_mask()
         options["wordlist"] = _pick_wordlist("wordlist")
+        if _yes("Add rule file(s)?", default=False):
+            options["rules"] = _pick_rules()
 
     return options
 
